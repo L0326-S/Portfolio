@@ -1,0 +1,959 @@
+---
+title: "Survey analysis"
+author: "Jisu Kang"
+date: "2024-11-26"
+output: html_document
+---
+
+```{r, warning = FALSE}
+library(readr)
+library(tidyverse)
+library(forcats)
+library(car)
+library(reshape2)
+```
+
+## data transform 
+```{r}
+banddata <- read_csv("Banddata.csv")
+head(banddata)
+
+transformed_data <- banddata %>%
+  select(-F1_1,-F3_3) %>%
+  mutate(
+    Size = factor(Size),
+    Sex = factor(Sex),
+    Active = factor(Active), #factor형 추가
+    Officer = factor(Officer)
+    )
+
+# Merging survey items by factor
+transformed_data$F1_score <- rowMeans(transformed_data[, c("F1_2","F1_3", "F1_4")], na.rm = TRUE)
+transformed_data$F2_score <- rowMeans(transformed_data[, c("F2_1", "F2_2", "F2_3")], na.rm = TRUE)
+transformed_data$F3_score <- rowMeans(transformed_data[, c("F3_1","F3_2")], na.rm = TRUE)
+transformed_data$F4_score <- rowMeans(transformed_data[, c("F4_1", "F4_2", "F4_3")], na.rm = TRUE)
+transformed_data$overall_satisfaction <- rowMeans(transformed_data[, c( "Satisfaction_1", "Satisfaction_2")], na.rm = TRUE)
+```
+
+## 동아리 부원 유형의 분포
+전체적인 분포를 알아보자.
+```{r}
+library(ggpubr)
+
+title_map <- c(
+  "Bandname" = "밴드 이름 분포",
+  "Active" = "활동 상태 분포",
+  "Size" = "동아리 크기 분포",
+  "Period" = "활동 기간 분포",
+  "Officer" = "임원 여부 분포",
+  "Sex" = "성별 분포"
+)
+
+variables <- c("Bandname", "Active", "Size", "Period", "Officer", "Sex")
+
+plots <- list()
+
+for (var in variables) {
+  counts <- table(transformed_data[[var]])
+  df <- as.data.frame(counts)
+  colnames(df) <- c("Category", "Count")
+  df$Percentage <- (df$Count / sum(df$Count)) * 100
+  p <- ggplot(df, aes(x = Category, y = Percentage, fill = Category)) +
+    geom_bar(stat = "identity") +
+    geom_text(aes(label = paste0(round(Percentage, 1), "%")), vjust = -0.5) +
+    labs(
+      title = title_map[[var]], 
+      x = "카테고리",
+      y = "비율 (%)"
+    ) +
+    theme_minimal() +
+    theme(legend.position = "none")
+  
+  plots[[var]] <- p
+}
+
+ggarrange(
+  plots[["Bandname"]],
+  plots[["Active"]],
+  plots[["Size"]],
+  plots[["Period"]],
+  plots[["Officer"]],
+  plots[["Sex"]],
+  ncol = 3, nrow = 2,  
+  labels = c("A", "B", "C", "D", "E", "F") 
+)
+
+```
+
+## EDA
+```{r}
+# Histogram of Expectation & Satisfaction Level (Before EFA)
+banddata2 <- banddata %>% 
+  rowwise() %>% 
+  mutate(
+  F1_mean = mean(c(F1_2, F1_3, F1_4)),
+  F2_mean = mean(c(F2_1, F2_2, F2_3)),
+  F3_mean = mean(c(F3_1, F3_2)),
+  F4_mean = mean(c(F4_1, F4_2, F4_3)),
+  Satisfaction_mean = mean(c(Satisfaction_1, Satisfaction_2)), 
+  before_mean = mean(c(Before_F1, Before_F2, Before_F3, Before_F4))
+  )
+```
+
+```{r}
+## Expectation
+
+Before <- banddata %>% 
+  select(Before_F1, Before_F2, Before_F3, Before_F4)
+  
+### 데이터를 long format으로 변환
+Before_long <- Before %>%
+  pivot_longer(cols = everything(), names_to = "variable", values_to = "value")
+
+
+### 비율 계산
+Before_summary <- Before_long %>%
+  group_by(variable, value) %>%
+  summarise(count = n(), .groups = "drop") %>%
+  group_by(variable) %>%
+  mutate(proportion = count / sum(count))
+
+
+### 누적 막대 그래프 생성
+
+custom_colors <- c("1" = "#ffcccc", # 연분홍
+                   "2" = "#ff9999", # 옅은 분홍
+                   "3" = "#ff6666", # 중간 분홍
+                   "4" = "#ff3333", # 진한 분홍
+                   "5" = "#cc0000") # 가장 진한 붉은색
+
+custom_colors <- c("1" = "#1E3A5F", 
+                   "2" = "#2B517A", 
+                   "3" = "#376690", 
+                   "4" = "#4787B3",
+                   "5" = "#569CD6") 
+ggplot(Before_summary, aes(x = variable, y = proportion, fill = fct_rev(factor(value)))) +
+  geom_bar(stat = "identity", position = "fill")+
+  labs(
+    title = "동아리 입부 전 기대 정도의 분포",
+    y = "비율",
+    fill = "기대도 (1~5)"
+  ) +
+  theme_minimal() +
+  scale_x_discrete(labels = c("Before_F1" = "친목", 
+                              "Before_F2" = "음악/문화생활", 
+                              "Before_F3" = "공연", 
+                              "Before_F4" = "조직생활")) +
+  scale_fill_manual(values = custom_colors) 
+```
+
+
+```{r}
+# 데이터를 long format으로 변환
+Before_long <- banddata %>%
+  select(Before_F1, Before_F2, Before_F3, Before_F4) %>%
+  pivot_longer(cols = everything(), names_to = "Question", values_to = "Response") %>%
+  # 문항 이름을 한글로 변경
+  mutate(Question = case_when(
+    Question == "Before_F1" ~ "친목 활동 기대",
+    Question == "Before_F2" ~ "음악/문화생활 기대",
+    Question == "Before_F3" ~ "공연 활동 기대",
+    Question == "Before_F4" ~ "조직 생활 기대"
+  ))
+
+# 히스토그램 병렬 표시
+ggplot(Before_long, aes(x = Response, fill = Question)) +
+  geom_histogram(binwidth = 1, alpha = 0.8, position = "dodge", colour = "#1E3A5F") +
+  facet_wrap(~ Question, scales = "free_y") +
+  labs(
+    title = "각 문항별 응답 분포",
+    x = "응답 점수",
+    y = "빈도"
+  ) +
+  scale_fill_manual(values = c("#4FC3F7", "#29B6F6", "#039BE5", "#1E88E5")) + # 색상 설정
+  theme_minimal()
+```
+
+
+```{r}
+# 친목에 대한 기대도의 평균
+mean(banddata2$Before_F1)
+# 음악/문화생활에 대한 기대도의 평균
+mean(banddata2$Before_F2)
+# 공연에 대한 기대도의 평균
+mean(banddata2$Before_F3)
+# 조직생활에 대한 기대도의 평균
+mean(banddata2$Before_F4)
+```
+
+```{r}
+banddata2 %>%
+  select(F1_mean, Before_F1) %>%
+  ggplot(aes(x = F1_mean)) +
+  geom_density(colour = "#4682B4", size = 1.2) +
+  geom_histogram(aes(y = ..density.., fill = ..count..), boundary = 1, alpha = 0.8, position = "identity",  binwidth=1/3) +
+  geom_density(aes(x = Before_F1), alpha = 0.8, colour = "#FFA500")+
+  geom_segment(aes(x = 2, y = 0.35, xend = 2.6, yend = 0.25), 
+               arrow = arrow(length = unit(0.2, "cm")), colour = "#FF8C00", size = 0.5)  +
+  annotate("text", x = 1.5, y = 0.4, label = "가입 전 기대 밀도", size = 4, hjust = 0, colour = "#FF8C00")+  
+  labs(
+    title = "가입 전 친목 활동에 대한 기대와 동아리 가입 후 만족도 밀도 비교",
+    x = "평균 점수",
+    y = "밀도"
+  )
+
+banddata2 %>%
+  select(F1_mean, Before_F1) %>%
+  ggplot(aes(x = F1_mean)) +
+  geom_density(colour = "#4682B4", size = 1.2) +
+  geom_histogram(aes(y = ..density.., fill = ..count..), boundary = 1, alpha = 0.8, position = "identity",  binwidth=1/3) +  
+  labs(
+    title = "친목 활동에 대한 만족도",
+    x = "평균 점수",
+    y = "밀도"
+  )
+
+## 실제 친목에 대한 만족도의 평균
+mean(banddata2$F1_mean)
+```
+```{r}
+banddata2 %>%
+  select(F2_mean, Before_F2) %>%
+  ggplot(aes(x = F2_mean)) +
+  geom_density(colour = "#4682B4", size = 1.2) +
+  geom_histogram(aes(y = ..density.., fill = ..count..), boundary = 1, alpha = 0.8, position = "identity",  binwidth=1/3) +
+  geom_density(aes(x = Before_F2), alpha = 0.8, colour = "#FFA500")+  
+  labs(
+    title = "가입 전 음악/문화생활에 대한 기대와 동아리 가입 후 만족도 밀도 비교",
+    x = "평균 점수",
+    y = "밀도"
+  )
+
+banddata2 %>%
+  select(F2_mean, Before_F2) %>%
+  ggplot(aes(x = F2_mean)) +
+  geom_density(colour = "#4682B4", size = 1.2) +
+  geom_histogram(aes(y = ..density.., fill = ..count..), boundary = 1, alpha = 0.8, position = "identity",  binwidth=1/3) +
+  labs(
+    title = "음악/문화생활에 대한 만족도",
+    x = "평균 점수",
+    y = "밀도"
+  )
+
+# 실제 음악/문화생활에 대한 만족도의 평균
+mean(banddata2$F2_mean)
+```
+```{r}
+banddata2 %>%
+  select(F3_mean, Before_F3) %>%
+  ggplot(aes(x = F3_mean)) +
+  geom_density(colour = "#4682B4", size = 1.2) +
+  geom_histogram(aes(y = ..density.., fill = ..count..), boundary = 1, alpha = 0.8, position = "identity",  binwidth=1/3) +
+  geom_density(aes(x = Before_F3), alpha = 0.8, colour = "#FFA500") +  
+  labs(
+    title = "가입 전 공연에 대한 기대와 동아리 가입 후 만족도 밀도 비교",
+    x = "평균 점수",
+    y = "밀도"
+  )
+
+banddata2 %>%
+  select(F3_mean, Before_F3) %>%
+  ggplot(aes(x = F3_mean)) +
+  geom_density(colour = "#4682B4", size = 1.2) +
+  geom_histogram(aes(y = ..density.., fill = ..count..), boundary = 1, alpha = 0.8, position = "identity",  binwidth=1/3) +
+  labs(
+    title = "공연에 대한 만족도",
+    x = "평균 점수",
+    y = "밀도"
+  )
+# 실제 공연에 대한 만족도의 평균
+mean(banddata2$F3_mean)
+```
+
+```{r}
+banddata2 %>%
+  select(F4_mean, Before_F4) %>%
+  ggplot(aes(x = F4_mean)) +
+  geom_density(colour = "#4682B4", size = 1.2) +
+  geom_histogram(aes(y = ..density.., fill = ..count..), boundary = 1, alpha = 0.8, position = "identity",  binwidth=1/3) +
+  geom_density(aes(x = Before_F4), alpha = 0.8, colour = "#FFA500")+  
+  labs(
+    title = "가입 전 조직생활에 대한 기대와 동아리 가입 후 만족도 밀도 비교",
+    x = "평균 점수",
+    y = "밀도"
+  )
+
+banddata2 %>%
+  select(F4_mean, Before_F4) %>%
+  ggplot(aes(x = F4_mean)) +
+  geom_density(colour = "#4682B4", size = 1.2) +
+  geom_histogram(aes(y = ..density.., fill = ..count..), boundary = 1, alpha = 0.8, position = "identity",  binwidth=1/3) +
+  labs(
+    title = "조직생활에 대한 만족도",
+    x = "평균 점수",
+    y = "밀도"
+  )
+# 실제 조직생활에 대한 만족도의 평균
+mean(banddata2$F4_mean)
+```
+
+```{r}
+banddata2 %>%
+  select(Satisfaction_mean, before_mean) %>%
+  ggplot(aes(x = Satisfaction_mean)) +
+  geom_density(colour = "#4682B4", size = 1.2) +
+  geom_histogram(aes(y = ..density.., fill = ..count..), boundary = 1, alpha = 0.8, position = "identity",  binwidth=1/3) +
+  geom_density(aes(x = before_mean), alpha = 0.8, colour = "#FFA500") +  
+  labs(
+    title = "가입 전 기대와 동아리 가입 후 종합 만족도 밀도 비교",
+    x = "평균 점수",
+    y = "밀도"
+  )
+
+banddata2 %>%
+  select(Satisfaction_mean) %>%
+  ggplot(aes(x = Satisfaction_mean)) +
+  geom_density(colour = "#4682B4", size = 1.2) +
+  geom_histogram(aes(y = ..density.., fill = ..count..), boundary = 1, alpha = 0.8, position = "identity",  binwidth=1/3) +
+  labs(
+    title = "종합 만족도",
+    x = "평균 점수",
+    y = "밀도"
+  )
+# 종합 만족도의 평균
+mean(banddata2$Satisfaction_mean)
+```
+
+
+
+## 활동 이전 기댓값과 만족도 사이의 상관계수
+```{r}
+reduced_data <- transformed_data[,c(8:11, 25:29)]
+cor1<-cor(reduced_data)
+cor_data <- melt(cor1)
+colnames(cor_data) <- c("Var1", "Var2", "Correlation")
+
+unique(cor_data$Var1)
+variable_names <- c("Before_F1" = "(전) 친목 활동",
+                    "Before_F2" = "(전) 음악/문화",
+                    "Before_F3" = "(전) 공연",
+                    "Before_F4" = "(전) 조직 생활",
+                    "F1_score" = "친목 활동",
+                    "F2_score" = "음악/문화",
+                    "F3_score" = "공연",
+                    "F4_score" = "조직 생활",
+                    "overall_satisfaction" = "전체적인 만족도")
+
+cor_data$Var1 <- variable_names[cor_data$Var1]
+cor_data$Var2 <- variable_names[cor_data$Var2]
+
+ggplot(cor_data, aes(x = Var1, y = Var2, fill = Correlation)) +
+  geom_tile() + 
+  scale_fill_gradient2(low = "blue", mid = "white", high = "red", midpoint = 0) +
+  geom_text(aes(label = round(Correlation, 2)), color = "black") + 
+  labs(title = "Correlation Matrix",
+       x = "Variables",
+       y = "Variables") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))  
+```
+
+활동 이전 기댓값과 활동 이후 만족도 사이에 약한 상관관계가 존재했고, 활동 이후 만족도 사이에는 서로 강한 상관관계를 보였다. 활동 이전에 동아리 활동에 대해 기대한 정도가 이후의 만족도에 비해 큰 연관이 없으므로 이후의 요인분석에서는 활동 이전의 기댓값을 배제하고 탐색적 요인분석을 진행한다. 
+
+
+## 탐색적 요인분석(EFA)
+동아리 활동 만족도 문항들에 대해 탐색적 요인분석을 진행한다. 
+```{r}
+library(GPArotation)
+library(psych)
+
+F_score <- transformed_data[, 12:22]
+
+cor_matrix <- cor(F_score)
+print(cor_matrix)
+
+# KMO 검사 (표본 적합성 테스트)
+kmo_result <- KMO(F_score)
+print(kmo_result)
+#Overall KMO(0.81) 및 개별 변수의 MSA 값이 모두 0.7 이상으로 나타났기 때문에, 데이터는 탐색적 요인분석(EFA)에 충분히 적합하다.
+
+# Bartlett's Test (요인 분석 가능성 확인)
+bartlett_result <- cortest.bartlett(cor_matrix, n = nrow(F_score))
+print(bartlett_result)
+# p < 0.05이므로 변수들 간에 유의미한 상관관계가 있으며, 요인분석을 수행할 수 있다.
+
+# 탐색적 요인 분석
+efa_result <- fa(F_score, nfactors = 4, rotate = "varimax") 
+print(efa_result)
+```
+4개 요인이 데이터의 57%를 설명한다. 
+
+1. 요인 적재값(Factor Loadings)
+
+MR1은 전체 데이터 분산의 18%, MR4는 9%를 설명.
+
+4개 요인이 데이터의 57%를 설명함: 충분히 적합한 수준 
+
+2. 모델 적합도
+
+RMSR (Root Mean Square of Residuals) = 0.03
+
+df 보정된 RMSR = 0.05
+
+Tucker Lewis Index (TLI) = 0.972
+
+RMSEA = 0.04 (90% CI: 0 ~ 0.106): 적합도 우수
+
+Chi-Square = 19.86, p-value = 0.28
+
+p-value가 0.05 이상이므로, 데이터가 모델과 잘 맞는다고 할 수 있다. 
+
+```{r}
+# 요인 적재값 시각화
+fa.diagram(efa_result) #책임감에 대한 문항이 친목과 관련이 있게 나왔다.
+
+# Scree Plot 
+fa.parallel(F_score, fa = "fa") # 병렬 분석으로 요인 수 추천
+```
+
+위의 요인 4개가 적절하다.
+
+최초에 설계한 설문지의 유형과 거의 유사하므로 요인별로 잘 나뉘어졌다 가정하고, 하나의 요인으로 묶인 문항의 만족도의 평균을 각 요인의 값으로 한다. 
+
+
+
+
+
+
+## PCA
+   이미 설문지의 각 인자의 구성 문항이 어떤 특정한 개념(잠재변수)을 측정하도록 설계되었다면, 이미 해당 인자 구조를 전제한 상태이므로, 인자분석을 굳이 수행하지는 않고, 각 인자를 대표하는 점수를 계산하기 위해 단순 평균을 사용한다. 같은 인자에 속하는 문항들은 동일한 잠재변수를 측정한다고 가정되므로, 문항 값을 합치거나 평균을 내는 것이 충분히 그 인자를 대표할 수 있다.
+
+  단, 각 인자당 설정한 문항들에 대한 설문 설계가 올바르게 되었는지 확인하기 위해 **검증적 인자분석(CFA)**을 먼저 수행한다.   
+ 
+  F1: 친구 관계 및 네트워크 형성. 총 4개 문항. F1_1 ~ F1_4
+  F2: 악기실력 및 음악적 소양. 총 3개 문항. F2_1 ~ F2_3
+  F3: 밴드 무대 경험. 총 3개 문항. F3_1 ~ F3_3
+  F4: 조직 생활과 임무 수행력 향상. 총 3개 문항. F4_1 ~ F4_3
+
+  크롬바흐 알파를 사용해 얻은 결과에 따라 F1_1, F3_3 항목은 빼고 분석을 진행한다.
+ 
+  아래 결과를 해석하자면, 일단 CFA 결과에서 첫 번째로 확인해야 할 부분은 모델 적합도이다. 주요 모델 적합도 지표로는 Chi-Sqaured Test of Model Fit, Comparative Fit Index(CFI), Tucker-Lewis Index(TLI), Root Mean Square Error of Approximation(RMSEA), Standardized Root Mean Square Residual(SRMR)로 총 5개인데, Chi-square은 큰 표본에서는 민감하므로 CFI, TLI, RMSEA, SRMR을 사용했다.
+  1) CFI >= 0.9: 적합도 양호
+  2) TLI >= 0.9: 적합도 양호
+  3) RMSEA <= 0.08 : 적합도 양호
+  4) SRMR <= 0.08: 적합도 양호
+다음 조건을 모두 만족하므로, 우리가 설계했던 모델이 데이터를 잘 설명한다고 판단할 수 있다.
+  
+  
+ 이 때, F1_1 항목과 F3_3 항목을 넣고 진행하면 모델 적합도가 양호하지 않다고 뜬다.
+```{r}
+# install.packages("lavaan")
+library(lavaan)
+
+cfa_model <- '
+  Factor1 =~ F1_2 + F1_3 + F1_4
+  Factor2 =~ F2_1 + F2_2 + F2_3
+  Factor3 =~ F3_1 + F3_2
+  Factor4 =~ F4_1 + F4_2 + F4_3
+'
+fit <- cfa(cfa_model, data = transformed_data)
+summary(fit, fit.measures = TRUE, standardized = TRUE)
+```
+
+
+
+## 평균 재정의
+```{r}
+# Merging survey items by factor
+transformed_data$F1_score <- rowMeans(transformed_data[, c("F1_2","F1_3", "F1_4", "F4_1")], na.rm = TRUE)
+transformed_data$F2_score <- rowMeans(transformed_data[, c("F2_1", "F2_2", "F2_3")], na.rm = TRUE)
+transformed_data$F3_score <- rowMeans(transformed_data[, c("F3_1","F3_2")], na.rm = TRUE)
+transformed_data$F4_score <- rowMeans(transformed_data[, c("F4_2", "F4_3")], na.rm = TRUE)
+transformed_data$overall_satisfaction <- rowMeans(transformed_data[, c( "Satisfaction_1", "Satisfaction_2")], na.rm = TRUE)
+```
+
+
+
+## EFA 이후 요인별 그래프
+```{r}
+# Histogram after moving a question after EFA
+
+## 변경이 있는 첫번째 요소와 네번째 요소에 대해서 히스토그램 수정
+
+
+banddata3 <- banddata %>% 
+  rowwise() %>% 
+  mutate(
+  new_F1_mean = mean(c(F1_2, F1_3, F1_4, F4_1)),
+  F2_mean = mean(c(F2_1, F2_2, F2_3)),
+  F3_mean = mean(c(F3_1, F3_2)),
+  new_F4_mean = mean(c(F4_2, F4_3)),
+  Satisfaction_mean = mean(c(Satisfaction_1, Satisfaction_2))
+  )
+
+
+banddata3 %>%
+  select(new_F1_mean, Before_F1) %>%
+  ggplot(aes(x = new_F1_mean)) +
+  geom_density(colour = "#4682B4", size = 1.2) +
+  geom_histogram(aes(y = ..density.., fill = ..count..), boundary = 1, alpha = 0.8, position = "identity",  binwidth=1/3) +
+  geom_density(aes(x = Before_F1), alpha = 0.8, colour = "#FFA500") +  
+  labs(
+    title = "가입 전 친목 활동에 대한 기대와 동아리 가입 후 만족도 밀도 비교",
+    x = "평균 점수",
+    y = "밀도"
+  )
+
+banddata3 %>%
+  select(new_F1_mean) %>%
+  ggplot(aes(x = new_F1_mean)) +
+  geom_density(colour = "#4682B4", size = 1.2) +
+  geom_histogram(aes(y = ..density.., fill = ..count..), boundary = 1, alpha = 0.8, position = "identity",  binwidth=1/3) +  
+  labs(
+    title = "친목 활동에 대한 만족도",
+    x = "평균 점수",
+    y = "밀도"
+  )
+# 요인 1 만족도의 평균
+mean(banddata3$new_F1_mean)
+```
+
+```{r}
+banddata3 %>%
+  select(new_F4_mean, Before_F4) %>%
+  ggplot(aes(x = new_F4_mean)) +
+  geom_density(colour = "#4682B4", size = 1.2) +
+  geom_histogram(aes(y = ..density.., fill = ..count..), boundary = 1, alpha = 0.8, position = "identity",  binwidth=1/3) +
+  geom_density(aes(x = Before_F4), alpha = 0.8, colour = "#FFA500")  +  
+  labs(
+    title = "가입 전 조직생활에 대한 기대와 동아리 가입 후 만족도 밀도 비교",
+    x = "평균 점수",
+    y = "밀도"
+  )
+
+banddata3 %>%
+  select(new_F4_mean) %>%
+  ggplot(aes(x = new_F4_mean)) +
+  geom_density(colour = "#4682B4", size = 1.2) +
+  geom_histogram(aes(y = ..density.., fill = ..count..), boundary = 1, alpha = 0.8, position = "identity",  binwidth=1/3) +
+  labs(
+    title = "조직생활에 대한 만족도",
+    x = "평균 점수",
+    y = "밀도"
+  )
+# 요인 4 만족도의 평균
+mean(banddata3$new_F4_mean)
+```
+
+
+
+
+## ANOVA
+### 임원 활동의 유무에 따라
+```{r}
+long_data <- transformed_data %>%
+  pivot_longer(cols = c(F1_score, F2_score, F3_score, F4_score, overall_satisfaction),
+               names_to = "Metric",
+               values_to = "Score")
+levels(long_data$Officer) <- c("없음", "있음")
+long_data$Metric <- as.factor(long_data$Metric)
+levels(long_data$Metric) <- c("친목 활동", "음악/문화", "공연", "조직 생활", "전체적인 만족도")
+
+ggplot(long_data, aes(x = Officer, y = Score, color = Officer)) +
+  geom_boxplot() +
+  facet_wrap(~ Metric, scales = "free") + 
+  labs(title = "임원 활동 유무에 따른 밴드 동아리에서의 만족도",
+       x = "Officer", 
+       y = "Score") +
+  theme_minimal()  +
+  theme(legend.position = "none") 
+```
+
+
+
+
+```{r}
+# 등분산성 검정
+leveneTest(F1_score ~ Officer, data = transformed_data)
+leveneTest(F2_score ~ Officer, data = transformed_data)
+leveneTest(F3_score ~ Officer, data = transformed_data)
+leveneTest(F4_score ~ Officer, data = transformed_data)
+leveneTest(overall_satisfaction ~ Officer, data = transformed_data)
+```
+
+F1_score가 등분산성을 만족하지 못해 해당 항목만 Welch’s ANOVA를 사용하기로 한다.  
+```{r}
+anova1 <- oneway.test(F1_score ~ Officer, data = transformed_data, var.equal = FALSE)
+anova1
+
+anova2 <- aov(F2_score ~ Officer, data = transformed_data)
+summary(anova2)
+
+anova3 <- aov(F3_score ~ Officer, data = transformed_data)
+summary(anova3)
+
+anova4 <- aov(F4_score ~ Officer, data = transformed_data)
+summary(anova4)
+
+anova5 <- aov(overall_satisfaction ~ Officer, data = transformed_data)
+summary(anova5)
+
+oneway.test(F1_score ~ Officer, data = transformed_data, var.equal = FALSE)
+```
+
+```{r}
+# 정규성 검정
+by(transformed_data$F1_score, transformed_data$Officer, shapiro.test)
+shapiro.test(residuals(anova2))
+shapiro.test(residuals(anova3))
+shapiro.test(residuals(anova4))
+shapiro.test(residuals(anova5))
+```
+
+
+정규성 검정과 등분산성 검정을 모두 만족하므로 유의수준 0.05 수준에서 음악/문화를 제외한 모든 분야에서 임원 활동 유무에 따라 만족도 차이가 난다고 할 수 있다. 
+
+### 동아리 활동 기간에 따라
+```{r}
+levels(long_data$Period) <- c("6개월 미만", "6개월 이상 1년 미만", "1년 이상 2년 미만", "2년 이상")
+
+ggplot(long_data, aes(x = Period, y = Score, color = Period)) +
+  geom_boxplot() +
+  facet_wrap(~ Metric, scales = "free") + 
+  labs(title = "동아리 활동 기간에 따른 밴드 동아리에서의 만족도",
+       x = "Period", 
+       y = "Score") +
+  theme_minimal()  +
+  theme(legend.position = "none") 
+```
+
+
+
+
+```{r}
+# 등분산성 검정
+leveneTest(F1_score ~ Period, data = transformed_data)
+leveneTest(F2_score ~ Period, data = transformed_data)
+leveneTest(F3_score ~ Period, data = transformed_data)
+leveneTest(F4_score ~ Period, data = transformed_data)
+leveneTest(overall_satisfaction ~ Period, data = transformed_data)
+```
+```{r}
+anova1 <- aov(F1_score ~ Period, data = transformed_data)
+summary(anova1)
+
+anova2 <- aov(F2_score ~ Period, data = transformed_data)
+summary(anova2)
+
+anova3 <- aov(F3_score ~ Period, data = transformed_data)
+summary(anova3)
+
+anova4 <- aov(F4_score ~ Period, data = transformed_data)
+summary(anova4)
+
+anova5 <- aov(overall_satisfaction ~ Period, data = transformed_data)
+summary(anova5)
+```
+
+```{r}
+# 정규성 검정
+shapiro.test(residuals(anova3))
+```
+
+정규성 검정과 등분산성 검정을 모두 만족하므로 유의수준 0.05 수준에서 친목 분야와 공연 분야에서 동아리 활동 기간에 따라 만족도 차이가 난다고 할 수 있다. 
+
+
+### 동아리 활동 인원에 따라
+```{r}
+levels(long_data$Size) <- c("20명 미만", "20명 이상 30명 미만", "40명 이상")
+
+ggplot(long_data, aes(x = Size, y = Score, color = Size)) +
+  geom_boxplot() +
+  facet_wrap(~ Metric, scales = "free") + 
+  labs(title = "동아리 활동 인원에 따른 밴드 동아리에서의 만족도",
+       x = "Size", 
+       y = "Score") +
+  theme_minimal()  +
+  theme(legend.position = "none") 
+```
+
+
+
+
+```{r}
+# 등분산성 검정
+leveneTest(F1_score ~ Size, data = transformed_data)
+leveneTest(F2_score ~ Size, data = transformed_data)
+leveneTest(F3_score ~ Size, data = transformed_data)
+leveneTest(F4_score ~ Size, data = transformed_data)
+leveneTest(overall_satisfaction ~ Size, data = transformed_data)
+```
+```{r}
+anova1 <- aov(F1_score ~ Size, data = transformed_data)
+summary(anova1)
+
+anova2 <- aov(F2_score ~ Size, data = transformed_data)
+summary(anova2)
+
+anova3 <- aov(F3_score ~ Size, data = transformed_data)
+summary(anova3)
+
+anova4 <- oneway.test(F4_score ~ Size, data = transformed_data, var.equal = FALSE)
+anova4
+
+anova5 <- aov(overall_satisfaction ~ Size, data = transformed_data)
+summary(anova5)
+```
+
+```{r}
+# 정규성 검정
+shapiro.test(residuals(anova2))
+```
+
+정규성 검정과 등분산성 검정을 모두 만족하므로 유의수준 0.05 수준에서 음악/문화 분야에서 동아리 활동 인원에 따라 만족도 차이가 난다고 할 수 있다. 
+
+
+### 성별에 따라
+```{r}
+levels(long_data$Sex) <- c("F", "M")
+
+ggplot(long_data, aes(x = Sex, y = Score, color = Sex)) +
+  geom_boxplot() +
+  facet_wrap(~ Metric, scales = "free") + 
+  labs(title = "성별에 따른 밴드 동아리에서의 만족도",
+       x = "Sex", 
+       y = "Score") +
+  theme_minimal()  +
+  theme(legend.position = "none") 
+```
+
+
+
+
+```{r}
+# 등분산성 검정
+leveneTest(F1_score ~ Sex, data = transformed_data)
+leveneTest(F2_score ~ Sex, data = transformed_data)
+leveneTest(F3_score ~ Sex, data = transformed_data)
+leveneTest(F4_score ~ Sex, data = transformed_data)
+leveneTest(overall_satisfaction ~ Sex, data = transformed_data)
+```
+```{r}
+anova1 <- aov(F1_score ~ Sex, data = transformed_data)
+summary(anova1)
+
+anova2 <- aov(F2_score ~ Sex, data = transformed_data)
+summary(anova2)
+
+anova3 <- aov(F3_score ~ Sex, data = transformed_data)
+summary(anova3)
+
+anova4 <- aov(F4_score ~ Sex, data = transformed_data)
+summary(anova4)
+
+anova5 <- aov(overall_satisfaction ~ Sex, data = transformed_data)
+summary(anova5)
+```
+
+```{r}
+# 정규성 검정
+shapiro.test(residuals(anova5))
+```
+
+정규성 검정과 등분산성 검정을 모두 만족하므로 유의수준 0.05 수준에서 성별에 따라 전체적인 만족도 차이가 난다고 할 수 있다. 
+
+
+### 활동 중인지에 따라
+```{r}
+levels(long_data$Active) <- c("활동 중이 아님", "활동 중")
+
+ggplot(long_data, aes(x = Active, y = Score, color = Active)) +
+  geom_boxplot() +
+  facet_wrap(~ Metric, scales = "free") + 
+  labs(title = "활동 중인지에 따른 밴드 동아리에서의 만족도",
+       x = "Active", 
+       y = "Score") +
+  theme_minimal()  +
+  theme(legend.position = "none") 
+```
+
+
+
+
+```{r}
+# 등분산성 검정
+leveneTest(F1_score ~ Active, data = transformed_data)
+leveneTest(F2_score ~ Active, data = transformed_data)
+leveneTest(F3_score ~ Active, data = transformed_data)
+leveneTest(F4_score ~ Active, data = transformed_data)
+leveneTest(overall_satisfaction ~ Active, data = transformed_data)
+```
+```{r}
+anova1 <- aov(F1_score ~ Active, data = transformed_data)
+summary(anova1)
+
+anova2 <- aov(F2_score ~ Active, data = transformed_data)
+summary(anova2)
+
+anova3 <- oneway.test(F3_score ~ Active, data = transformed_data, var.equal = FALSE)
+anova3
+
+anova4 <- aov(F4_score ~ Active, data = transformed_data)
+summary(anova4)
+
+anova5 <- aov(overall_satisfaction ~ Active, data = transformed_data)
+summary(anova5)
+```
+
+활동 유무에 따라서는 유의미한 만족도 차이가 나지 않는 것으로 보인다. 
+
+
+
+## Multiple linear regression
+
+ 이제 문항 값을 평균내어 F*_score 열을 만들자.
+
+```{r}
+# Merging survey items by factor
+transformed_data$F1_score <- rowMeans(transformed_data[, c("F1_2","F1_3", "F1_4")], na.rm = TRUE)
+transformed_data$F2_score <- rowMeans(transformed_data[, c("F2_1", "F2_2", "F2_3")], na.rm = TRUE)
+transformed_data$F3_score <- rowMeans(transformed_data[, c("F3_1","F3_2")], na.rm = TRUE)
+transformed_data$F4_score <- rowMeans(transformed_data[, c("F4_1", "F4_2", "F4_3")], na.rm = TRUE)
+transformed_data$overall_satisfaction <- rowMeans(transformed_data[, c( "Satisfaction_1", "Satisfaction_2")], na.rm = TRUE)
+```
+ 
+전체 만족도(반응 변수)를 예측하는 다중회귀분석을 진행한다.
+ 
+```{r}
+# Perform multiple linear regression
+model_full <- lm(overall_satisfaction ~ F1_score + F2_score + F3_score + F4_score, data = transformed_data)
+summary(model_full)
+```
+
+## Evaluating model fit
+
+  Normal QQ plot follows normal distribution. Residual vs Fitted plot shows that residual is distributed randomly, but most of the data are placed on right(4 ~ 5).
+```{r}
+# Residual plot
+par(mfrow = c(2, 2))
+plot(model_full)
+```
+
+```{r}
+# Multicollinearity
+library(car)
+vif(model_full)
+```
+
+ 상관계수 > 0.7 : 강한 상관관계 -> 다중공선성 가능성
+ 상관계수 < 0.7 : 약한 상관관계 -> 다중공선성 낮음
+
+ 이 때, factor들 사이의 상관계수는 전부 0.7보다 작으므로, factor끼리의 상관관계는 적음을 알 수 있다.
+```{r}
+# correlation matrix
+library(corrplot)
+correlation_matrix <- cor(transformed_data[, c("F1_score", "F2_score", "F3_score", "F4_score")])
+print(correlation_matrix)
+
+corrplot(correlation_matrix, method = "circle")
+```
+
+## Multiple Regression(dividing sex)
+```{r}
+# male data
+data_M <- transformed_data %>%
+  filter(Sex == "M")
+
+# Merging survey items by factor
+data_M$F1_score <- rowMeans(data_M[, c("F1_2","F1_3", "F1_4")], na.rm = TRUE)
+data_M$F2_score <- rowMeans(data_M[, c("F2_1", "F2_2", "F2_3")], na.rm = TRUE)
+data_M$F3_score <- rowMeans(data_M[, c("F3_1","F3_2")], na.rm = TRUE)
+data_M$F4_score <- rowMeans(data_M[, c("F4_1", "F4_2", "F4_3")], na.rm = TRUE)
+data_M$overall_satisfaction <- rowMeans(data_M[, c( "Satisfaction_1", "Satisfaction_2")], na.rm = TRUE)
+```
+
+
+```{r}
+# female data
+data_F <- transformed_data %>%
+  filter(Sex == "F")
+
+# Merging survey items by factor
+data_F$F1_score <- rowMeans(data_F[, c("F1_2","F1_3", "F1_4")], na.rm = TRUE)
+data_F$F2_score <- rowMeans(data_F[, c("F2_1", "F2_2", "F2_3")], na.rm = TRUE)
+data_F$F3_score <- rowMeans(data_F[, c("F3_1","F3_2")], na.rm = TRUE)
+data_F$F4_score <- rowMeans(data_F[, c("F4_1", "F4_2", "F4_3")], na.rm = TRUE)
+data_F$overall_satisfaction <- rowMeans(data_F[, c( "Satisfaction_1", "Satisfaction_2")], na.rm = TRUE)
+```
+
+
+```{r}
+# male fit
+model_M <- lm(overall_satisfaction ~ F1_score + F2_score + F3_score + F4_score, data = data_M)
+summary(model_M)
+```
+
+```{r}
+# female fit
+model_F <- lm(overall_satisfaction ~ F1_score + F2_score + F3_score + F4_score, data = data_F)
+summary(model_F)
+```
+
+## Multiple Regression(dividing size)
+```{r}
+# ~20 data
+data_under20 <- transformed_data %>%
+  filter(Size == "~20")
+
+# Merging survey items by factor
+data_under20$F1_score <- rowMeans(data_under20[, c("F1_2","F1_3", "F1_4")], na.rm = TRUE)
+data_under20$F2_score <- rowMeans(data_under20[, c("F2_1", "F2_2", "F2_3")], na.rm = TRUE)
+data_under20$F3_score <- rowMeans(data_under20[, c("F3_1","F3_2")], na.rm = TRUE)
+data_under20$F4_score <- rowMeans(data_under20[, c("F4_1", "F4_2", "F4_3")], na.rm = TRUE)
+data_under20$overall_satisfaction <- rowMeans(data_under20[, c( "Satisfaction_1", "Satisfaction_2")], na.rm = TRUE)
+```
+
+```{r}
+# 20~30 data
+data_20to30 <- transformed_data %>%
+  filter(Size == "20~30")
+
+# Merging survey items by factor
+data_20to30$F1_score <- rowMeans(data_20to30[, c("F1_2","F1_3", "F1_4")], na.rm = TRUE)
+data_20to30$F2_score <- rowMeans(data_20to30[, c("F2_1", "F2_2", "F2_3")], na.rm = TRUE)
+data_20to30$F3_score <- rowMeans(data_20to30[, c("F3_1","F3_2")], na.rm = TRUE)
+data_20to30$F4_score <- rowMeans(data_20to30[, c("F4_1", "F4_2", "F4_3")], na.rm = TRUE)
+data_20to30$overall_satisfaction <- rowMeans(data_20to30[, c( "Satisfaction_1", "Satisfaction_2")], na.rm = TRUE)
+```
+
+```{r}
+# 40~ data
+data_over40 <- transformed_data %>%
+  filter(Size == "40~")
+
+# Merging survey items by factor
+data_over40$F1_score <- rowMeans(data_over40[, c("F1_2","F1_3", "F1_4")], na.rm = TRUE)
+data_over40$F2_score <- rowMeans(data_over40[, c("F2_1", "F2_2", "F2_3")], na.rm = TRUE)
+data_over40$F3_score <- rowMeans(data_over40[, c("F3_1","F3_2")], na.rm = TRUE)
+data_over40$F4_score <- rowMeans(data_over40[, c("F4_1", "F4_2", "F4_3")], na.rm = TRUE)
+data_over40$overall_satisfaction <- rowMeans(data_over40[, c( "Satisfaction_1", "Satisfaction_2")], na.rm = TRUE)
+```
+
+```{r}
+# under20 fit
+model_under20 <- lm(overall_satisfaction ~ F1_score + F2_score + F3_score + F4_score, data = data_under20)
+summary(model_under20)
+```
+
+```{r}
+# 20to30 fit
+model_20to30 <- lm(overall_satisfaction ~ F1_score + F2_score + F3_score + F4_score, data = data_20to30)
+summary(model_20to30)
+```
+
+
+```{r}
+# over40 fit
+model_over40 <- lm(overall_satisfaction ~ F1_score + F2_score + F3_score + F4_score, data = data_over40)
+summary(model_over40)
+```
