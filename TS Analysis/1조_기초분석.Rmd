@@ -1,0 +1,191 @@
+---
+title: "자료 기초분석"
+author: "Jisu Kang"
+date: "2024-05-19"
+output: html_document
+---
+
+```{r include=FALSE}
+library(readxl)
+library(readr)
+library(dplyr)
+library(ggplot2)
+library(lubridate)
+```
+
+### 1. 공휴일 데이터와 이용자 데이터 불러오기
+```{r}
+holiday <- read_excel("공휴일(2022~2023).xlsx", col_names = FALSE)
+colnames(holiday) <- c("date", "wday", "name")
+holiday$date <- as.Date(holiday$date, format = "%Y-%m-%d")
+holiday
+```
+
+
+```{r}
+file_path <- 'rent_use_day_agg_rt.csv' #파일 경로 
+data <- read.csv(file = file_path)
+data$대여일자 <- as.Date(data$대여일자, format="%Y-%m-%d")
+data$대여구분코드 <- as.character(data$대여구분코드)
+data <- data %>% filter(data$대여구분코드 != "단체권")
+data$대여구분코드[data$대여구분코드 %in% c("일일권(비회원)", "일일권(회원)")] <- "one-day pass"
+data$대여구분코드[data$대여구분코드 == "정기권"] <- "season pass"
+data$대여구분코드 <- as.factor(data$대여구분코드)
+
+data_agg <- data %>%
+  group_by(대여일자, 대여구분코드) %>%
+  summarise(사용자수 = sum(사용자수), 사용자수 = sum(사용자수), .groups = 'drop')
+
+data_agg$wday <- wday(data_agg$대여일자, label = T)
+data_agg$holiday <- "평일"
+data_agg$holiday[wday(data_agg$대여일자)%in%c(1,7)|data_agg$대여일자 %in% holiday$date] <- "휴일"
+data_agg$holiday <- as.factor(data_agg$holiday)
+
+data_agg$scale[data_agg$대여구분코드 == "one-day pass"] <- scale(data_agg$사용자수[data_agg$대여구분코드 == "one-day pass"])
+data_agg$scale[data_agg$대여구분코드 == "season pass"] <- scale(data_agg$사용자수[data_agg$대여구분코드 == "season pass"])
+```
+
+### 2. 휴일 여부와 이용자 수의 관계
+
+```{r}
+anv <- lm(사용자수~holiday*대여구분코드, data = data_agg)
+summary(anv)
+par(mfrow = c(2,2))
+plot(anv)
+
+df <- data_agg %>%
+  group_by(holiday, 대여구분코드) %>%
+  summarise(scale = mean(scale),
+            사용자수 = mean(사용자수)) 
+
+
+df %>%
+  ggplot(aes(x = holiday, y = 사용자수, 
+             group = 대여구분코드, colour = 대여구분코드)) +
+  geom_point(size = 3) +
+  geom_line() +
+  labs(col = "이용권 종류", 
+       x = "공휴일 여부",
+       title = "공휴일 여부에 따른 사용자 수 차이")
+
+df %>%
+  ggplot(aes(x = holiday, y = scale, 
+             group = 대여구분코드, colour = 대여구분코드)) +
+  geom_point(size = 3) +
+  geom_line() +
+  labs(col = "이용권 종류", 
+       x = "공휴일 여부",
+       y = "사용자수(scaled)",
+       title = "공휴일 여부에 따른 사용자 수 차이")
+```
+
+
+일일권 사용자는 휴일에 이용이 늘어난 데에 비해 정기권 이용자 수는 줄어든 것으로 보아 이용하는 날짜가 평일인지 휴일인지가 각 이용권 유형에 따른 사용자의 이용 여부에 강한 영향을 미친다고 할 수 있다. 
+
+
+### 3. 날씨 데이터 불러오기
+```{r}
+weather <- read_csv("weather_v001.csv")
+weather <- rename(weather, temp = "평균기온(℃)")
+weather <- rename(weather, "대여일자"= "날짜")
+weather$`강수량(mm)`[is.na(weather$`강수량(mm)`)] <- 0
+data_agg <- inner_join(data_agg, weather, by = "대여일자")
+head(data_agg,10)
+```
+
+### 4. 일일 평균기온과 사용자 수
+```{r}
+anv2 <- lm(사용자수~temp+대여구분코드, data = data_agg)
+summary(anv2)
+par(mfrow = c(2,2))
+plot(anv2)
+
+
+data_agg %>%
+  ggplot(aes(x = temp, y = 사용자수, col = 대여구분코드))+
+  geom_smooth() +
+  labs(x = "기온(°C)",
+       col = "이용권 종류")
+data_agg %>%
+  ggplot(aes(x = temp, y = scale, col = 대여구분코드)) +
+  geom_smooth() +
+  labs(x = "기온(°C)",
+       y = "사용자수(scaled)",
+       col = "이용권 종류")
+
+
+```
+
+
+일일 평균 기온의 경우 대체적으로 기온이 올라갈수록 이용자 수가 증가하는 것으로 보였지만, 일일권 이용자의 경우 20도 이상의 고온에서 이용자가 감소하는 추세를 보였다. 
+
+### 5. 강수량과 이용자 수
+```{r}
+anv3 <- lm(사용자수~`강수량(mm)`*대여구분코드, data = data_agg)
+summary(anv3)
+par(mfrow = c(2,2))
+plot(anv3)
+
+
+data_agg %>%
+  ggplot(aes(x = `강수량(mm)`, y = 사용자수, col = 대여구분코드))+
+  geom_smooth() +
+  labs(x = "강수량(mm)",
+       col = "이용권 종류")
+data_agg %>%
+  ggplot(aes(x = `강수량(mm)`, y = scale, col = 대여구분코드)) +
+  geom_smooth() +
+  labs(x = "강수량(mm)",
+       y = "사용자수(scaled)",
+       col = "이용권 종류")
+
+
+```
+
+
+강수량의 경우 0 주변을 제외하면 이용자 수가 너무 적었다. 
+
+### 6. 눈/비 여부와 이용자 수 
+강수량이 0이면 눈/비가 오지 않았고, 0보다 크면 눈이나 비가 왔다고 판단하였다. 
+```{r}
+data_agg$rain <- "X"
+data_agg$rain[data_agg$`강수량(mm)`!=0] <- "O"
+data_agg$rain <- as.factor(data_agg$rain)
+
+anv4<- lm(사용자수~rain*대여구분코드, data = data_agg)
+summary(anv4)
+par(mfrow = c(2,2))
+plot(anv4)
+
+anv5<- lm(사용자수~rain+대여구분코드, data = data_agg)
+summary(anv5)
+
+
+df <- data_agg %>%
+  group_by(rain, 대여구분코드) %>%
+  summarise(scale = mean(scale),
+            사용자수 = mean(사용자수)) 
+
+
+df %>%
+  ggplot(aes(x = rain, y = 사용자수, 
+             group = 대여구분코드, colour = 대여구분코드)) +
+  geom_point(size = 3) +
+  geom_line() +
+  labs(col = "이용권 종류", 
+       x = "눈/비 여부",
+       title = "눈/비 여부에 따른 사용자 수 차이")
+
+df %>%
+  ggplot(aes(x = rain, y = scale, 
+             group = 대여구분코드, colour = 대여구분코드)) +
+  geom_point(size = 3) +
+  geom_line() +
+  labs(col = "이용권 종류", 
+       x = "눈/비 여부",
+       y = "사용자수(scaled)",
+       title = "눈/비 여부에 따른 사용자 수 차이")
+```
+
+
+정기권과 당일권 사용 여부는 날씨와 강한 교호작용을 보이지 않았지만 사용자 수에 있어 각각 강한 영향을 주는 것을 확인할 수 있었다. 
