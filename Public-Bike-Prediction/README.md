@@ -56,15 +56,19 @@
 ## 🔹 분석 결과
 ### **📌 주요 인사이트**
 1️⃣ **따릉이 이용 패턴은 정기권과 일일권 간에 차이가 있다.**  
+![따릉이 이용량 변화](https://github.com/L0326-S/Portfolio/blob/main/Public-Bike-Prediction/images/season_oneday.jpeg)
    - 정기권 이용자는 출퇴근 시간(평일 아침, 저녁) 중심으로 사용  
    - 일일권 이용자는 날씨 영향을 더 크게 받으며 주말에 사용 증가  
 
 2️⃣ **날씨가 따릉이 이용량에 영향을 미친다.**  
+![날씨에 따른 이용량 변화](https://github.com/L0326-S/Portfolio/blob/main/Public-Bike-Prediction/images/weather.jpeg)
    - 기온이 높을수록 이용량 증가 → 하지만 20℃ 이상에서는 일일권 사용 감소  
    - 강수량이 증가하면 이용량이 급감 (비가 오면 따릉이 사용 줄어듦)  
 
 3️⃣ **최적 예측 모델은 외생변수를 포함한 Regression with ARIMA errors 모델이다.**  
    - 외생변수를 추가했을 때 AIC, BIC가 더 낮아 예측력이 향상됨  
+![정기권](https://github.com/L0326-S/Portfolio/blob/main/Public-Bike-Prediction/images/seasonpass.jpeg)
+![일일권](https://github.com/L0326-S/Portfolio/blob/main/Public-Bike-Prediction/images/onedaypass.jpeg)
 
 ---
 
