@@ -1,0 +1,102 @@
+---
+title: "따릉이 이용데이터 전처리"
+author: "Jisu Kang"
+date: "2025-11-23"
+output: html_document
+---
+```{r}
+library(tidyverse)
+library(readr)
+df2407 <- read_csv("C:/Users/강지수/iCloudDrive/2025-2/데이터시각화/기말과제/서울특별시 공공자전거 이용정보(일별)_2407.csv",locale = locale(encoding = "EUC-KR"))
+df2408 <- read_csv("C:/Users/강지수/iCloudDrive/2025-2/데이터시각화/기말과제/서울특별시 공공자전거 이용정보(일별)_2408.csv",locale = locale(encoding = "EUC-KR"))
+df2409 <- read_csv("C:/Users/강지수/iCloudDrive/2025-2/데이터시각화/기말과제/서울특별시 공공자전거 이용정보(일별)_2409.csv",locale = locale(encoding = "EUC-KR"))
+df2410 <- read_csv("C:/Users/강지수/iCloudDrive/2025-2/데이터시각화/기말과제/서울특별시 공공자전거 이용정보(일별)_2410.csv",locale = locale(encoding = "EUC-KR"))
+df2411 <- read_csv("C:/Users/강지수/iCloudDrive/2025-2/데이터시각화/기말과제/서울특별시 공공자전거 이용정보(일별)_2411.csv",locale = locale(encoding = "EUC-KR"))
+df2412 <- read_csv("C:/Users/강지수/iCloudDrive/2025-2/데이터시각화/기말과제/서울특별시 공공자전거 이용정보(일별)_2412.csv",locale = locale(encoding = "EUC-KR"))
+df2501 <- read_csv("C:/Users/강지수/iCloudDrive/2025-2/데이터시각화/기말과제/서울특별시 공공자전거 이용정보(일별)_2501.csv",locale = locale(encoding = "EUC-KR"))
+df2502 <- read_csv("C:/Users/강지수/iCloudDrive/2025-2/데이터시각화/기말과제/서울특별시 공공자전거 이용정보(일별)_2502.csv",locale = locale(encoding = "EUC-KR"))
+df2503 <- read_csv("C:/Users/강지수/iCloudDrive/2025-2/데이터시각화/기말과제/서울특별시 공공자전거 이용정보(일별)_2503.csv",locale = locale(encoding = "EUC-KR"))
+df2504 <- read_csv("C:/Users/강지수/iCloudDrive/2025-2/데이터시각화/기말과제/서울특별시 공공자전거 이용정보(일별)_2504.csv",locale = locale(encoding = "EUC-KR"))
+df2505 <- read_csv("C:/Users/강지수/iCloudDrive/2025-2/데이터시각화/기말과제/서울특별시 공공자전거 이용정보(일별)_2505.csv",locale = locale(encoding = "EUC-KR"))
+df2406 <- read_csv("C:/Users/강지수/iCloudDrive/2025-2/데이터시각화/기말과제/서울특별시 공공자전거 이용정보(일별)_2506.csv",locale = locale(encoding = "EUC-KR"))
+```
+```{r}
+# 1. 불러온 12개 데이터프레임을 리스트로 묶습니다.
+data_list <- list(df2407, df2408, df2409, df2410, df2411, df2412,
+                  df2501, df2502, df2503, df2504, df2505, df2406)
+# 2. 모든 데이터프레임의 컬럼 타입을 통일하는 함수를 정의합니다.
+standardize_df <- function(df) {
+  df %>%
+    mutate(
+      # 문자형 (chr)으로 통일
+      대여소번호 = as.character(대여소번호),
+      대여소 = as.character(대여소),
+      대여구분코드 = as.character(대여구분코드),
+      성별 = as.character(성별),
+      연령대 = as.character(연령대),
+      
+      # 숫자형 (dbl)으로 통일 (as.character()를 먼저 적용하여 NA를 유발하는 문자열을 처리)
+      이용건수 = as.numeric(as.character(이용건수)),
+      운동량 = as.numeric(as.character(운동량)),
+      탄소량 = as.numeric(as.character(탄소량)),
+      `이동거리(M)` = as.numeric(as.character(`이동거리(M)`)),
+      `이용시간(분)` = as.numeric(as.character(`이용시간(분)`)),
+      
+      # 날짜형 (date)으로 통일 (만약 '대여일자'가 문자형으로 남아있다면 적용)
+      대여일자 = as.Date(대여일자)
+    )
+}
+
+# 3. purrr::map() 함수를 사용하여 리스트 내 모든 데이터프레임에 타입 통일 함수를 적용합니다.
+df_standardized_list <- purrr::map(data_list, standardize_df)
+
+# 4. 타입이 통일된 리스트를 하나로 합칩니다.
+df_final <- dplyr::bind_rows(df_standardized_list)
+
+# 5. 최종 데이터프레임의 구조를 확인합니다.
+print(dplyr::glimpse(df_final))
+# 운동량과 탄소량 컬럼의 NA 개수를 확인합니다.
+df_final %>%
+  summarise(
+    na_운동량 = sum(is.na(운동량)),
+    na_탄소량 = sum(is.na(탄소량)),
+    total_rows = n()
+  )
+
+summary(df_final)
+```
+
+```{r}
+# lubridate 패키지를 사용해 월 정보를 추출합니다.
+library(lubridate)
+
+df_na_check <- df_final %>%
+  # 대여일자에서 월(month)을 추출하여 새로운 컬럼을 생성합니다.
+  mutate(
+    YearMonth = format(대여일자, "%Y-%m")
+  ) %>%
+  # 월별로 그룹화하여 운동량 또는 탄소량이 NA인 행의 개수를 셉니다.
+  group_by(YearMonth) %>%
+  summarise(
+    NA_Count = sum(is.na(운동량) | is.na(탄소량)),
+    Total_Rows = n()
+  ) %>%
+  # NA 비율을 계산합니다.
+  mutate(
+    NA_Ratio = (NA_Count / Total_Rows) * 100
+  ) %>%
+  arrange(desc(NA_Count))
+
+print(df_na_check)
+```
+
+```{r}
+library(dplyr)
+df_clean <- df_final %>%
+  drop_na(운동량, 탄소량)
+
+# 3. 클리닝 후 최종 데이터셋의 행 수와 구조를 다시 확인합니다.
+print(paste("클리닝 후 최종 데이터 행 수:", nrow(df_clean)))
+print(dplyr::glimpse(df_clean))
+```
+
